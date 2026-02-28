@@ -8,6 +8,8 @@
    Do not compile the core.hpp and vanillaP.cpp files during this process.
    After compiling the main.cpp and parlelModder.cpp files, run parlelModder and enter the location of the vanillaP.cpp file for installation.
    Run the .prl file you want to use with the main.cpp file you compiled and enter the location of your file.
+   If you want a quick setup you can download parlel.exe and parlelModder.exe with core.hpp
+
 
     Note that when installing "Parlel," you need to compile VanillaP.cpp with Modder. This applies to all other mods as well.
   
