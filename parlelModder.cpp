@@ -2,12 +2,22 @@
 #include <string>
 #include <filesystem>
 #include <cstdlib>
+#include <vector>
 
 namespace fs = std::filesystem;
 using namespace std;
 
+bool checkCompiler(const string& cmd) {
+#ifdef _WIN32
+    string check = cmd + " > nul 2>&1";
+#else
+    string check = cmd + " > /dev/null 2>&1";
+#endif
+    return system(check.c_str()) == 0;
+}
+
 int main() {
-    cout << "--- Parlel Modder Tool ---" << endl;
+    cout << "--- Parlel Modder Tool (Cross-Platform) ---" << endl;
     cout << "Derlemek istediginiz .cpp mod dosyasinin yolunu girin: ";
     
     string inputPath;
@@ -18,7 +28,6 @@ int main() {
         return 1;
     }
 
-    // Tırnak işaretlerini temizle (sürükle bırak yapıldığında gelebilir)
     if (inputPath.front() == '"' && inputPath.back() == '"') {
         inputPath = inputPath.substr(1, inputPath.length() - 2);
     }
@@ -29,35 +38,52 @@ int main() {
         return 1;
     }
 
-    if (cppPath.extension() != ".cpp") {
-        cout << "Hata: Bu bir .cpp dosyasi degil!" << endl;
-        return 1;
-    }
+#ifdef _WIN32
+    string libExt = ".dll";
+#else
+    string libExt = ".so";
+#endif
 
-    string dllName = cppPath.stem().string() + ".dll";
-    fs::path targetDir = cppPath.parent_path();
-    fs::path dllPath = targetDir / dllName;
+    string libName = cppPath.stem().string() + libExt;
+    fs::path libPath = cppPath.parent_path() / libName;
 
     cout << "[Modder] " << cppPath.filename().string() << " derleniyor..." << endl;
 
-    // Komut oluşturma: /LD (DLL oluştur), /EHsc (Exception handling), /std:c++17
-    string cmd = "cl /LD /EHsc /std:c++17 \"" + cppPath.string() + "\" /Fe:\"" + dllPath.string() + "\"";
-    
+    string cmd;
+    bool compiled = false;
+
+#ifdef _WIN32
+    // Windows: Try cl first, then g++
+    if (checkCompiler("cl /?")) {
+        cmd = "cl /LD /EHsc /std:c++17 \"" + cppPath.string() + "\" /Fe:\"" + libPath.string() + "\"";
+    } else if (checkCompiler("g++ --version")) {
+        cmd = "g++ -shared -fPIC -std=c++17 \"" + cppPath.string() + "\" -o \"" + libPath.string() + "\"";
+    } else {
+        cout << "[Hata] Derleyici bulunamadi! 'cl' veya 'g++' kurulu oldugundan emin olun." << endl;
+        return 1;
+    }
+#else
+    // Linux/macOS: Try g++ or clang++
+    if (checkCompiler("g++ --version")) {
+        cmd = "g++ -shared -fPIC -std=c++17 \"" + cppPath.string() + "\" -o \"" + libPath.string() + "\"";
+    } else if (checkCompiler("clang++ --version")) {
+        cmd = "clang++ -shared -fPIC -std=c++17 \"" + cppPath.string() + "\" -o \"" + libPath.string() + "\"";
+    } else {
+        cout << "[Hata] Derleyici bulunamadi! 'g++' veya 'clang++' kurulu oldugundan emin olun." << endl;
+        return 1;
+    }
+#endif
+
     cout << "Komut calistiriliyor: " << cmd << endl;
-    
     int result = system(cmd.c_str());
 
     if (result == 0) {
-        cout << "\n[Basarili] Mod dosyasi hazir!" << endl;
-        cout << "Olusturulan dosyalar:" << endl;
-        cout << "- " << dllPath.filename().string() << " (Calisma dosyasi)" << endl;
-        cout << "- " << cppPath.stem().string() << ".lib (Import kutuphanesi)" << endl;
+        cout << "\n[Basarili] Mod dosyasi hazir: " << libName << endl;
     } else {
         cout << "\n[Hata] Derleme sirasinda bir hata olustu." << endl;
-        cout << "Lutfen Visual Studio Developer Command Prompt (veya vcvars64.bat) acik oldugundan emin olun." << endl;
     }
 
-    cout << "\nCikmak icin bir tusa basin..." << endl;
+    cout << "\nCikmak icin Enter'a basin..." << endl;
     cin.get();
 
     return result;
