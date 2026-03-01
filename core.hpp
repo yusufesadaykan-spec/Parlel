@@ -164,12 +164,17 @@ public:
         fs::path exeDir = fs::path(exePath).parent_path();
         searchPaths.push_back(exeDir);
         searchPaths.push_back(exeDir / "Mods" / modName);
+#else
+        // Linux/macOS equivalent for getting executable directory could be complex, 
+        // using common paths for now.
+        searchPaths.push_back("/usr/local/lib/parlel");
+        searchPaths.push_back("/usr/lib/parlel");
 #endif
 
         // Add parent directory searches for development environments
         searchPaths.push_back(baseDir / ".." / "Mods" / modName);
 
-        fs::path cppPath, dllPath;
+        fs::path cppPath, libPath;
         bool found = false;
 
         string modNameLower = modName;
@@ -179,16 +184,20 @@ public:
             vector<string> names = {modName, modNameLower};
             for (const auto& name : names) {
                 fs::path p_cpp = dir / (name + ".cpp");
-                fs::path p_dll = dir / (name + ".dll");
+#ifdef _WIN32
+                fs::path p_lib = dir / (name + ".dll");
+#else
+                fs::path p_lib = dir / ("lib" + name + ".so");
+#endif
 
                 if (fs::exists(p_cpp)) {
                     cppPath = p_cpp;
-                    dllPath = p_cpp.parent_path() / (name + ".dll");
+                    libPath = p_cpp.parent_path() / p_lib.filename();
                     found = true;
                     break;
                 }
-                if (fs::exists(p_dll)) {
-                    dllPath = p_dll;
+                if (fs::exists(p_lib)) {
+                    libPath = p_lib;
                     found = true;
                     break;
                 }
@@ -207,37 +216,45 @@ public:
 
         if (fs::exists(cppPath)) {
             cout << "[Engine] " << modName << ".cpp derleniyor..." << endl;
-            string cmd = "cl /LD /EHsc /std:c++17 \"" + cppPath.string() + "\" /Fe:\"" + dllPath.string() + "\" > nul 2>&1";
+#ifdef _WIN32
+            string cmd = "cl /LD /EHsc /std:c++17 \"" + cppPath.string() + "\" /Fe:\"" + libPath.string() + "\" > nul 2>&1";
+#else
+            string cmd = "g++ -shared -fPIC -std=c++17 \"" + cppPath.string() + "\" -o \"" + libPath.string() + "\" > /dev/null 2>&1";
+#endif
             int res = system(cmd.c_str());
             if (res != 0) {
-                throw runtime_error("Derleme hatası! '" + cppPath.string() + "' derlenemedi. 'cl' komutunun açık olduğundan emin olun.");
+                throw runtime_error("Derleme hatası! '" + cppPath.string() + "' derlenemedi.");
             }
         }
 
 #ifdef _WIN32
-        HMODULE hMod = LoadLibraryA(dllPath.string().c_str());
+        HMODULE hMod = LoadLibraryA(libPath.string().c_str());
         if (!hMod) {
             DWORD err = GetLastError();
-            throw runtime_error("Modül yüklenemedi: " + dllPath.string() + " (Sistem Hatası: " + to_string(err) + ")");
-        }
-
-        typedef Module (*GetModFunc)();
-        GetModFunc getMod = (GetModFunc)GetProcAddress(hMod, "GetParlelModule");
-        if (!getMod) {
-            FreeLibrary(hMod);
-            throw runtime_error("Modül 'GetParlelModule' fonksiyonunu bulamadı: " + dllPath.string());
+            throw runtime_error("Modül yüklenemedi: " + libPath.string() + " (Sistem Hatası: " + to_string(err) + ")");
         }
 #else
-        void* hMod = dlopen(dllPath.string().c_str(), RTLD_LAZY);
-        if (!hMod) throw runtime_error("Modül yüklenemedi: " + dllPath.string());
-        
-        typedef Module (*GetModFunc)();
-        GetModFunc getMod = (GetModFunc)dlsym(hMod, "GetParlelModule");
-        if (!getMod) {
-            dlclose(hMod);
-            throw runtime_error("Modül 'GetParlelModule' fonksiyonunu bulamadı: " + dllPath.string());
+        void* hMod = dlopen(libPath.string().c_str(), RTLD_LAZY);
+        if (!hMod) {
+            throw runtime_error("Modül yüklenemedi: " + libPath.string() + " (" + dlerror() + ")");
         }
 #endif
+
+        typedef Module (*GetModFunc)();
+#ifdef _WIN32
+        GetModFunc getMod = (GetModFunc)GetProcAddress(hMod, "GetParlelModule");
+#else
+        GetModFunc getMod = (GetModFunc)dlsym(hMod, "GetParlelModule");
+#endif
+
+        if (!getMod) {
+#ifdef _WIN32
+            FreeLibrary(hMod);
+#else
+            dlclose(hMod);
+#endif
+            throw runtime_error("Modül 'GetParlelModule' fonksiyonunu bulamadı: " + libPath.string());
+        }
 
         registerModule(getMod());
         loadedModules.insert(modName);
