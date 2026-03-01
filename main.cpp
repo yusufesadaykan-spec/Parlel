@@ -1,5 +1,4 @@
 #include "core.hpp"
-#include "math_module.hpp"
 
 int main(int argc, char* argv[]) {
     ParlelEngine engine;
@@ -24,7 +23,7 @@ int main(int argc, char* argv[]) {
     }});
 
     // Developers can register their own modules here
-    engine.registerModule(CreateMathModule());
+    // engine.registerModule(...)
 
     string targetFile;
     if (argc > 1) {
@@ -44,23 +43,9 @@ int main(int argc, char* argv[]) {
         }
         return 0;
     }
-
-    cout << "--- Parlel Modular Engine Test ---" << endl;
-    try {
-        // Test nested math and precedence
-        cout << "10 + 5 * 2 = "; engine.execute("print(10 + 5 * 2)");
-        cout << "(10 + 5) * 2 = "; engine.execute("print((10 + 5) * 2)");
-
-        // Test custom module function (pow)
-        cout << "pow(2, 10) = "; engine.execute("print(pow(2, 10))");
-
-        // Test variables
-        engine.execute("var(\"x\", 5)");
-        engine.execute("var(\"y\", sqrt(x + 11))"); // Nested function and addition
-        cout << "Variable y (sqrt(5 + 11)) = "; engine.execute("print(y)");
-
-    } catch (const exception& e) {
-        cout << "Test Error: " << e.what() << endl;
+    else {
+        cout << "Lutfen calisitirmak istediginiz .prl dosyasinin yolunu girin: ";
+        getline(cin, targetFile);
     }
 
     return 0;
