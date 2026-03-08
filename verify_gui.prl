@@ -1,0 +1,19 @@
+// GUI Test Script (verify.prl)
+
+mod("VanillaP")
+mod("GUI")
+init(800, 600)
+
+while_prl("is_open()", "
+    clear(30, 30, 35)
+    
+    // Draw moving rectangle
+    t = time() / 500
+    x = 400 + sin(t) * 200
+    y = 300 + cos(t) * 100
+    
+    rect(x, y, 50, 50, 255, 100, 0)
+    text(10, 10, 'Parlel Standalone GUI Test', 255, 255, 255)
+    
+    update()
+")

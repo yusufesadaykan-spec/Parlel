@@ -1,90 +1,119 @@
 #include <iostream>
+#include <fstream>
 #include <string>
-#include <filesystem>
-#include <cstdlib>
 #include <vector>
+#include <filesystem>
+#include <regex>
+#include <sstream>
 
-namespace fs = std::filesystem;
 using namespace std;
+namespace fs = std::filesystem;
 
-bool checkCompiler(const string& cmd) {
-#ifdef _WIN32
-    string check = cmd + " > nul 2>&1";
-#else
-    string check = cmd + " > /dev/null 2>&1";
-#endif
-    return system(check.c_str()) == 0;
+struct ModFunc {
+    string name;
+    int argCount;
+    string code;
+};
+
+void writeString(ofstream& out, const string& s) {
+    uint32_t len = (uint32_t)s.length();
+    out.write((char*)&len, 4);
+    out.write(s.c_str(), len);
 }
 
-int main() {
-    cout << "--- Parlel Modder Tool (Cross-Platform) ---" << endl;
-    cout << "Derlemek istediginiz .cpp mod dosyasinin yolunu girin: ";
+int main(int argc, char* argv[]) {
+    if (argc < 2) {
+        cout << "Kullanim: parlelModder <kaynak_dosya_yolu (.cpp)>" << endl;
+        return 1;
+    }
+
+    string inputPath = argv[1];
+    fs::path p(inputPath);
+
+    if (!fs::exists(p)) {
+        cout << "[Hata] Dosya bulunamadi: " << inputPath << endl;
+        return 1;
+    }
+
+    ifstream in(inputPath);
+    stringstream buffer;
+    buffer << in.rdbuf();
+    string content = buffer.str();
+    in.close();
+
+    string moduleName = p.stem().string();
+    vector<ModFunc> funcs;
+
+    cout << "[Modder] C++ kaynak dosyasi isleniyor: " << p.filename() << endl;
+
+    // 1. Find Module Name
+    regex nameRegex(R"prm(m\.name\s*=\s*"([^"]+)")prm");
+    smatch nameMatch;
+    if (regex_search(content, nameMatch, nameRegex)) {
+        moduleName = nameMatch[1];
+    }
+
+        // 2. Enhanced Lambda/String Extractor
+        // Captures: m.funcs.push_back({"name", count, "code" OR [captures](args){ return body; }})
+        regex funcRegex(R"prm(m\.funcs\.push_back\(\{\s*"([^"]+)"\s*,\s*(\d+)\s*,\s*(?:"([^"]+)"|\[.*?\]\s*\((.*?)\)\s*\{\s*return\s+(.*?)\s*;\s*\})\s*\}\))prm");
+        auto words_begin = sregex_iterator(content.begin(), content.end(), funcRegex);
+        auto words_end = sregex_iterator();
+
+        for (sregex_iterator i = words_begin; i != words_end; ++i) {
+            smatch match = *i;
+            string name = match[1];
+            int argCount = stoi(match[2]);
+            string code;
+
+            if (match[3].matched) {
+                code = match[3].str();
+            } else {
+                string params = match[4].str();
+                code = match[5].str();
+                
+                // Map native parameter names to arg0, arg1...
+                vector<string> paramNames;
+                regex paramSplit(R"((?:auto\s+)?([a-zA-Z_0-9]+))");
+                auto p_begin = sregex_iterator(params.begin(), params.end(), paramSplit);
+                auto p_end = sregex_iterator();
+                for (sregex_iterator p = p_begin; p != p_end; ++p) {
+                    paramNames.push_back((*p)[1]);
+                }
+
+                for (size_t pIdx = 0; pIdx < paramNames.size(); ++pIdx) {
+                    // Replace word-bound parameter with argN
+                    regex r("\\b" + paramNames[pIdx] + "\\b");
+                    code = regex_replace(code, r, "arg" + to_string(pIdx));
+                }
+            }
+            
+            funcs.push_back({name, argCount, code});
+            cout << "   [+] Fonksiyon eklendi: " << name << " (" << argCount << " arg)" << endl;
+        }
+
+    // 3. Output .prm Binary
+    string outputPath = p.replace_extension(".prm").string();
+    ofstream out(outputPath, ios::binary);
     
-    string inputPath;
-    getline(cin, inputPath);
+    // Magic Number: PRM1
+    uint32_t magic = 0x50524D31;
+    out.write((char*)&magic, 4);
 
-    if (inputPath.empty()) {
-        cout << "Hata: Yol bos olamaz!" << endl;
-        return 1;
+    writeString(out, moduleName);
+    
+    uint32_t funcSize = (uint32_t)funcs.size();
+    out.write((char*)&funcSize, 4);
+
+    for (const auto& f : funcs) {
+        uint8_t type = 0; // Function
+        out.write((char*)&type, 1);
+        writeString(out, f.name);
+        out.write((char*)&f.argCount, 4);
+        writeString(out, f.code);
     }
 
-    if (inputPath.front() == '"' && inputPath.back() == '"') {
-        inputPath = inputPath.substr(1, inputPath.length() - 2);
-    }
+    out.close();
+    cout << "[Basari] Mod dosyasi olusturuldu: " << outputPath << endl;
 
-    fs::path cppPath(inputPath);
-    if (!fs::exists(cppPath)) {
-        cout << "Hata: Dosya bulunamadi: " << inputPath << endl;
-        return 1;
-    }
-
-#ifdef _WIN32
-    string libExt = ".dll";
-#else
-    string libExt = ".so";
-#endif
-
-    string libName = cppPath.stem().string() + libExt;
-    fs::path libPath = cppPath.parent_path() / libName;
-
-    cout << "[Modder] " << cppPath.filename().string() << " derleniyor..." << endl;
-
-    string cmd;
-    bool compiled = false;
-
-#ifdef _WIN32
-    // Windows: Try cl first, then g++
-    if (checkCompiler("cl /?")) {
-        cmd = "cl /LD /EHsc /std:c++17 \"" + cppPath.string() + "\" /Fe:\"" + libPath.string() + "\"";
-    } else if (checkCompiler("g++ --version")) {
-        cmd = "g++ -shared -fPIC -std=c++17 \"" + cppPath.string() + "\" -o \"" + libPath.string() + "\"";
-    } else {
-        cout << "[Hata] Derleyici bulunamadi! 'cl' veya 'g++' kurulu oldugundan emin olun." << endl;
-        return 1;
-    }
-#else
-    // Linux/macOS: Try g++ or clang++
-    if (checkCompiler("g++ --version")) {
-        cmd = "g++ -shared -fPIC -std=c++17 \"" + cppPath.string() + "\" -o \"" + libPath.string() + "\"";
-    } else if (checkCompiler("clang++ --version")) {
-        cmd = "clang++ -shared -fPIC -std=c++17 \"" + cppPath.string() + "\" -o \"" + libPath.string() + "\"";
-    } else {
-        cout << "[Hata] Derleyici bulunamadi! 'g++' veya 'clang++' kurulu oldugundan emin olun." << endl;
-        return 1;
-    }
-#endif
-
-    cout << "Komut calistiriliyor: " << cmd << endl;
-    int result = system(cmd.c_str());
-
-    if (result == 0) {
-        cout << "\n[Basarili] Mod dosyasi hazir: " << libName << endl;
-    } else {
-        cout << "\n[Hata] Derleme sirasinda bir hata olustu." << endl;
-    }
-
-    cout << "\nCikmak icin Enter'a basin..." << endl;
-    cin.get();
-
-    return result;
+    return 0;
 }
